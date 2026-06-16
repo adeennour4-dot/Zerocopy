@@ -54,7 +54,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SessionListScreen(onSessionSelected: (String) -> Unit, onBack: () -> Unit) {
+fun SessionListScreen(onSessionSelected: (ChatSession) -> Unit, onBack: () -> Unit) {
   val app = ZeroCopyApp.instance
   val sessions by app.chatRepository.sessions.collectAsState(initial = emptyList())
   var showNewDialog by remember { mutableStateOf(false) }
@@ -108,7 +108,7 @@ fun SessionListScreen(onSessionSelected: (String) -> Unit, onBack: () -> Unit) {
           items(sessions, key = { it.id }) { session ->
             SessionCard(
               session = session,
-              onClick = { onSessionSelected(session.id) },
+              onClick = { onSessionSelected(session) },
               onRename = {
                 renameTarget = session
                 renameName = session.name

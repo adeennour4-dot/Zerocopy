@@ -9,12 +9,23 @@ android {
     compileSdk = 36
     ndkVersion = "27.0.12077973"
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(rootProject.projectDir.resolve("keystore.jks"))
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+            isV1SigningEnabled = true
+            isV2SigningEnabled = true
+        }
+    }
+
     defaultConfig {
         applicationId = "com.gguf.zerocopy"
         minSdk        = 27
         targetSdk     = 36
-        versionCode   = 8
-        versionName   = "8.0.0"
+        versionCode   = 9
+        versionName   = "8.1.0"
 
         externalNativeBuild {
             cmake {
@@ -33,8 +44,8 @@ android {
             }
         }
 
-        buildConfigField("String", "VERSION_NAME", "\"8.0.0\"")
-        buildConfigField("int", "VERSION_CODE", "8")
+        buildConfigField("String", "VERSION_NAME", "\"8.1.0\"")
+        buildConfigField("int", "VERSION_CODE", "9")
     }
 
     compileOptions {
@@ -56,6 +67,22 @@ android {
 
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            isDebuggable = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.findByName("release")
+        }
+        debug {
+            isDebuggable = true
+            applicationIdSuffix = ".debug"
+        }
     }
 }
 

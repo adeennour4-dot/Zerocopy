@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Chat
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AssistChip
@@ -78,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gguf.zerocopy.ZeroCopyApp
+import com.gguf.zerocopy.data.local.SettingsManager
 import com.gguf.zerocopy.data.repository.AttachmentType
 import com.gguf.zerocopy.data.repository.ChatMessage
 import com.gguf.zerocopy.data.repository.MessageRole
@@ -96,7 +99,9 @@ fun ChatScreen(
   onBack: () -> Unit,
   onSettings: () -> Unit,
   onModels: () -> Unit,
-  onSessions: () -> Unit
+  onSessions: () -> Unit,
+  loadedModelPath: String = "",
+  loadedModelName: String = ""
 ) {
   val context = LocalContext.current
   val app = ZeroCopyApp.instance
@@ -116,27 +121,44 @@ fun ChatScreen(
   var statusText by remember { mutableStateOf(modelName.ifEmpty { "No model" }) }
   var attachmentUri by remember { mutableStateOf<Uri?>(null) }
 
-  val chatId = sessionId ?: remember { app.chatRepository.createSession("Chat - $modelName").id }
+  val chatId = sessionId ?: remember {
+    app.chatRepository.createSession(
+      name = "Chat - $modelName",
+      modelPath = modelPath,
+      modelName = modelName
+    ).id
+  }
 
   LaunchedEffect(chatId) {
-    if (sessionId != null) app.chatRepository.selectSession(sessionId)
+    if (sessionId != null) {
+      app.chatRepository.selectSession(sessionId)
+      val session = app.chatRepository.sessions.value.find { it.id == sessionId }
+      if (session != null && session.modelPath.isNotEmpty() && session.modelName.isNotEmpty()) {
+        if (loadedModelPath != session.modelPath) {
+          loadedModelPath = session.modelPath
+          loadedModelName = session.modelName
+          val eng = app.engineManager.selectEngineForFormat(session.modelPath)
+          if (!eng.isModelLoaded) {
+            eng.config = SettingsManager.toConfig()
+            eng.repeatPenalty = SettingsManager.toRepeatPenalty()
+            eng.systemPrompt = SettingsManager.systemPrompt
+          }
+        }
+      }
+    }
     messages = app.chatRepository.getMessages(chatId)
   }
 
   LaunchedEffect(isInferring) {
     if (!isInferring) return@LaunchedEffect
     val start = System.currentTimeMillis()
-    var firstSeen = false
     isProcessing = true
     while (isInferring) {
       delay(30)
       val text = engine?.readPartialStream().orEmpty()
       if (text.isNotEmpty()) {
-        streamedText = if (streamedText.isEmpty() || isProcessing) text else streamedText + text
-        if (!firstSeen) {
-          firstSeen = true
-          isProcessing = false
-        }
+        streamedText += text
+        isProcessing = false
       }
       val elapsed = (System.currentTimeMillis() - start) / 1000f
       val tok = engine?.getTokensGenerated() ?: 0
@@ -148,17 +170,11 @@ fun ChatScreen(
         delay(60)
         val final = engine?.readTokenStream().orEmpty()
         val ft = engine?.getTokensGenerated() ?: 0
-        if (final.isNotEmpty()) {
+        if (final.isNotEmpty() && messages.none { it.timestamp == start && it.role == MessageRole.ASSISTANT }) {
           val msg = ChatMessage(
             MessageRole.ASSISTANT,
             final,
-            tps = if (elapsed >
-              0
-            ) {
-              ft / elapsed
-            } else {
-              0f
-            },
+            tps = if (elapsed > 0) ft / elapsed else 0f,
             tokens = ft
           )
           messages = messages + msg
@@ -181,6 +197,19 @@ fun ChatScreen(
     ) { result ->
       if (result.resultCode == Activity.RESULT_OK) {
         attachmentUri = result.data?.data
+      }
+    }
+
+  val speechLauncher =
+    rememberLauncherForActivityResult(
+      ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+      if (result.resultCode == Activity.RESULT_OK) {
+        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+          ?.firstOrNull()
+          ?.let { speechText ->
+            prompt = if (prompt.isBlank()) speechText else "$prompt $speechText"
+          }
       }
     }
 
@@ -341,7 +370,19 @@ fun ChatScreen(
                   }
                 var fullPrompt = msg
                 if (attach != null) {
-                  fullPrompt = "[Image attached: $attachmentName]\n$msg"
+                  val imageBytes = try {
+                    context.contentResolver.openInputStream(attach)?.use {
+                      it.readBytes()
+                    }
+                  } catch (_: Exception) { null }
+                  val b64 = imageBytes?.let {
+                    android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP)
+                  } ?: ""
+                  fullPrompt = if (b64.length in 50..500_000) {
+                    "Analyze this image and respond.\n[Image: data:image/jpeg;base64,$b64]\nUser: $msg"
+                  } else {
+                    "[Image attached: ${attachmentName} (${imageBytes?.size?.div(1024) ?: 0}KB)]\n$msg"
+                  }
                 }
                 engine.executeInference(fullPrompt, cb)
               }
@@ -355,6 +396,20 @@ fun ChatScreen(
                 type = "image/*"
               }
             imagePicker.launch(intent)
+          },
+          onSpeech = {
+            val intent =
+              Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(
+                  RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                  RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                )
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your message...")
+              }
+            try {
+              speechLauncher.launch(intent)
+            } catch (_: Exception) {
+            }
           }
         )
       }
@@ -453,21 +508,18 @@ fun ChatBubble(msg: ChatMessage, clip: ClipboardManager) {
 fun ThinkingContent(content: String) {
   val pattern =
     remember {
-      Regex("(?:<think>|<think>\\n?)(.*?)(?:</think>|</think>\\n?)", RegexOption.DOT_MATCHES_ALL)
+      Regex("<think>(.*?)</think>", RegexOption.DOT_MATCHES_ALL)
     }
   val match = remember(content) { pattern.find(content) }
   if (match != null) {
-    val think = match.groupValues[1].trim()
+    val raw = match.groupValues[1]
+    val think = raw.trim()
     val rest = content.substring(match.range.last + 1).trim()
     var open by remember { mutableStateOf(false) }
     Column {
       Surface(
-        onClick = {
-          open = !open
-        },
-        shape = RoundedCornerShape(
-          8.dp
-        ),
+        onClick = { open = !open },
+        shape = RoundedCornerShape(8.dp),
         color = ZcColors.ThinkBg,
         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
       ) {
@@ -583,7 +635,8 @@ fun InputBar(
   attachmentFileName: String?,
   onSend: () -> Unit,
   onStop: () -> Unit,
-  onImage: () -> Unit
+  onImage: () -> Unit,
+  onSpeech: () -> Unit = {}
 ) {
   Surface(color = ZcColors.Surface, shadowElevation = 8.dp) {
     Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
@@ -649,6 +702,14 @@ fun InputBar(
             Icons.Outlined.Image,
             "Attach Image",
             tint = ZcColors.Purple,
+            modifier = Modifier.size(18.dp)
+          )
+        }
+        IconButton(onClick = onSpeech, modifier = Modifier.size(36.dp), enabled = !isInferring) {
+          Icon(
+            Icons.Outlined.Mic,
+            "Voice Input",
+            tint = if (!isInferring) ZcColors.Accent2 else ZcColors.Text3,
             modifier = Modifier.size(18.dp)
           )
         }

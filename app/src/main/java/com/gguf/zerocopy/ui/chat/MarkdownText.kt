@@ -59,6 +59,22 @@ private fun parseMarkdown(
   var i = 0
   while (i < text.length) {
     when {
+      // Double newline = paragraph break
+      text.startsWith("\n\n", i) || text.startsWith("\r\n\r\n", i) -> {
+        append("\n\n")
+        i += if (text.startsWith("\r\n\r\n", i)) 4 else 2
+      }
+      // Single newline = line break
+      text[i] == '\n' || text[i] == '\r' -> {
+        append("\n")
+        i++
+        if (i < text.length && text[i] == '\n') i++ // skip \r\n
+      }
+      // Multiple spaces = keep one
+      text[i] == ' ' && i + 1 < text.length && text[i + 1] == ' ' -> {
+        append(' ')
+        while (i < text.length && text[i] == ' ') i++
+      }
       // Code block ```...```
       text.startsWith("```", i) -> {
         val end = text.indexOf("```", i + 3)
@@ -189,13 +205,7 @@ private fun parseMarkdown(
           val lineEnd = text.indexOf('\n', i)
           val headerText = text.substring(
             i + level + 1,
-            if (lineEnd >=
-              0
-            ) {
-              lineEnd
-            } else {
-              text.length
-            }
+            if (lineEnd >= 0) lineEnd else text.length
           ).trim()
           val size = when (level) {
             1 -> 20.sp
@@ -236,13 +246,7 @@ private fun parseMarkdown(
         }
       }
       // Horizontal rule --- or ***
-      (
-        text.startsWith(
-          "---",
-          i
-        ) ||
-          text.startsWith("***", i)
-        ) &&
+      (text.startsWith("---", i) || text.startsWith("***", i)) &&
         (i == 0 || text[i - 1] == '\n') -> {
         val lineEnd = text.indexOf('\n', i)
         val line = text.substring(i, if (lineEnd >= 0) lineEnd else text.length).trim()

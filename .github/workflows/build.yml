@@ -110,25 +110,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ndk-
 
-      # -----------------------------------------------------------------------
-      # Optional: Build Rust optimization layer
-      # -----------------------------------------------------------------------
       - name: Build Rust core
         if: ${{ github.event.inputs.enable_rust == 'true' || github.ref_type == 'tag' }}
         run: |
           export ANDROID_NDK_HOME="${{ env.NDK_HOME }}"
-          
-          # Install Rust
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source $HOME/.cargo/env
-          
-          # Add Android target
           rustup target add aarch64-linux-android
-          
-          # Install cargo-ndk
           cargo install cargo-ndk
-          
-          # Build
           cd rust_core
           export ANDROID_NDK_HOME="${{ env.NDK_HOME }}"
           cargo ndk -t arm64-v8a -o ../app/src/main/jniLibs build --release
@@ -145,11 +134,34 @@ jobs:
             echo "::warning::Vulkan header not found at $VK_HEADER — Vulkan GPU offload disabled"
           fi
 
-      # -----------------------------------------------------------------------
-      # Build APK
-      # -----------------------------------------------------------------------
       - name: Make gradlew executable
         run: chmod +x gradlew
+
+      - name: Prepare keystore for release
+        if: ${{ github.event.inputs.build_type == 'release' || github.ref_type == 'tag' }}
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > keystore.jks
+            echo "Keystore prepared for release signing"
+          else
+            echo "::warning::No KEYSTORE_BASE64 secret set — will create debug-compatible unsigned build"
+            # Create a dummy keystore for build to succeed
+            keytool -genkey -v -keystore keystore.jks -alias release -keyalg RSA \
+              -keysize 2048 -validity 10000 -storepass android -keypass android \
+              -dname "CN=ZeroCopy, OU=Dev, O=ZeroCopy, L=Unknown, ST=Unknown, C=US" 2>/dev/null
+            echo "storePassword=android" > keystore.properties
+            echo "keyPassword=android" >> keystore.properties
+            echo "keyAlias=release" >> keystore.properties
+            echo "storeFile=../keystore.jks" >> keystore.properties
+          fi
+          echo "KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD:-android}" >> $GITHUB_ENV
+          echo "KEY_ALIAS=${KEY_ALIAS:-release}" >> $GITHUB_ENV
+          echo "KEY_PASSWORD=${KEY_PASSWORD:-android}" >> $GITHUB_ENV
 
       - name: Build debug APK
         if: ${{ github.event.inputs.build_type != 'release' && github.ref_type != 'tag' }}
@@ -160,26 +172,11 @@ jobs:
 
       - name: Build release APK
         if: ${{ github.event.inputs.build_type == 'release' || github.ref_type == 'tag' }}
-        env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > keystore.jks
-            echo "storePassword=$KEYSTORE_PASSWORD" >> keystore.properties
-            echo "keyPassword=$KEY_PASSWORD" >> keystore.properties
-            echo "keyAlias=$KEY_ALIAS" >> keystore.properties
-            echo "storeFile=../keystore.jks" >> keystore.properties
-          fi
           ./gradlew assembleRelease \
             --no-daemon \
             --stacktrace
 
-      # -----------------------------------------------------------------------
-      # Upload artifacts
-      # -----------------------------------------------------------------------
       - name: Upload debug APK
         if: ${{ github.event.inputs.build_type != 'release' && github.ref_type != 'tag' }}
         uses: actions/upload-artifact@v4
@@ -204,9 +201,6 @@ jobs:
           path: app/build/intermediates/merged_native_libs/**/out/lib/
           retention-days: 7
 
-      # -----------------------------------------------------------------------
-      # GitHub Release (on tags)
-      # -----------------------------------------------------------------------
       - name: Create GitHub Release
         if: ${{ github.ref_type == 'tag' }}
         uses: softprops/action-gh-release@v2
@@ -215,42 +209,37 @@ jobs:
             app/build/outputs/apk/release/*.apk
           generate_release_notes: true
           make_latest: true
+          name: ZeroCopy ${{ github.ref_name }}
+          body: |
+            ## ZeroCopy ${{ github.ref_name }}
+            
+            **Important**: Enable "Install from unknown apps" permission in Settings to install.
+            If the APK still won't install, try enabling "Install via USB" in Developer Options.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ---------------------------------------------------------------------------
-  # Separate job: Code quality checks (parallel with build)
-  # ---------------------------------------------------------------------------
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-      
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-      
       - name: Run ktlint check
         run: |
-          # Install ktlint
           curl -sSLO https://github.com/pinterest/ktlint/releases/download/1.3.1/ktlint
           chmod +x ktlint
           find . -name "*.kt" -path "*/main/*" -exec ./ktlint {} \+
-      
       - name: Check for TODOs and FIXMEs
         run: |
           if grep -rn "TODO\|FIXME\|HACK" --include="*.kt" --include="*.cpp" --include="*.rs" .; then
             echo "WARNING: Found TODOs/FIXMEs in code"
           fi
 
-  # ---------------------------------------------------------------------------
-  # Separate job: APK size report
-  # ---------------------------------------------------------------------------
   size-report:
     runs-on: ubuntu-latest
     needs: build
@@ -260,7 +249,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ZeroCopy-v8-debug
-      
       - name: Analyze APK size
         run: |
           for apk in *.apk; do

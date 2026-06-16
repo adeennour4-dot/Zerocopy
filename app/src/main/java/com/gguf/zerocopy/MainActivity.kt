@@ -9,6 +9,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.gguf.zerocopy.data.local.SettingsManager
+import com.gguf.zerocopy.data.repository.ChatSession
 import com.gguf.zerocopy.ui.chat.ChatScreen
 import com.gguf.zerocopy.ui.download.DownloadScreen
 import com.gguf.zerocopy.ui.models.ModelListScreen
@@ -16,6 +18,9 @@ import com.gguf.zerocopy.ui.sessions.SessionListScreen
 import com.gguf.zerocopy.ui.settings.SettingsScreen
 import com.gguf.zerocopy.ui.theme.ZeroCopyTheme
 import com.gguf.zerocopy.ui.welcome.WelcomeScreen
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 enum class AppScreen { WELCOME, CHAT, SESSIONS, MODELS, DOWNLOAD, SETTINGS }
 
@@ -37,13 +42,36 @@ fun AppRoot() {
   var loadedModelName by remember { mutableStateOf("") }
   var currentSessionId by remember { mutableStateOf<String?>(null) }
 
+  fun createSessionWithModel(path: String, name: String): String {
+    loadedModelPath = path
+    loadedModelName = name
+    val session = app.chatRepository.createSession(
+      name = "Chat - $name",
+      modelPath = path,
+      modelName = name
+    )
+    currentSessionId = session.id
+    return session.id
+  }
+
+  fun restoreSessionModel(session: ChatSession) {
+    if (session.modelPath.isNotEmpty() && session.modelName.isNotEmpty()) {
+      loadedModelPath = session.modelPath
+      loadedModelName = session.modelName
+      val engine = app.engineManager.selectEngineForFormat(session.modelPath)
+      if (!engine.isModelLoaded) {
+        engine.config = SettingsManager.toConfig()
+        engine.repeatPenalty = SettingsManager.toRepeatPenalty()
+        engine.systemPrompt = SettingsManager.systemPrompt
+      }
+    }
+  }
+
   when (screen) {
     AppScreen.WELCOME ->
       WelcomeScreen(
         onLoadModel = { path, name ->
-          loadedModelPath = path
-          loadedModelName = name
-          currentSessionId = app.chatRepository.createSession("Chat - $name").id
+          createSessionWithModel(path, name)
           screen = AppScreen.CHAT
         },
         onDownload = { screen = AppScreen.DOWNLOAD }
@@ -60,8 +88,9 @@ fun AppRoot() {
       )
     AppScreen.SESSIONS ->
       SessionListScreen(
-        onSessionSelected = { id ->
-          currentSessionId = id
+        onSessionSelected = { session ->
+          restoreSessionModel(session)
+          currentSessionId = session.id
           screen = AppScreen.CHAT
         },
         onBack = { screen = AppScreen.CHAT }
@@ -69,9 +98,7 @@ fun AppRoot() {
     AppScreen.MODELS ->
       ModelListScreen(
         onModelSelected = { path, name ->
-          loadedModelPath = path
-          loadedModelName = name
-          currentSessionId = app.chatRepository.createSession("Chat - $name").id
+          createSessionWithModel(path, name)
           screen = AppScreen.CHAT
         },
         onBack = { screen = AppScreen.CHAT }
@@ -79,9 +106,7 @@ fun AppRoot() {
     AppScreen.DOWNLOAD ->
       DownloadScreen(
         onModelSelected = { path, name ->
-          loadedModelPath = path
-          loadedModelName = name
-          currentSessionId = app.chatRepository.createSession("Chat - $name").id
+          createSessionWithModel(path, name)
           screen = AppScreen.CHAT
         },
         onBack = { screen = AppScreen.WELCOME }
