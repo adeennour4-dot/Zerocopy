@@ -18,9 +18,6 @@ import com.gguf.zerocopy.ui.sessions.SessionListScreen
 import com.gguf.zerocopy.ui.settings.SettingsScreen
 import com.gguf.zerocopy.ui.theme.ZeroCopyTheme
 import com.gguf.zerocopy.ui.welcome.WelcomeScreen
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 enum class AppScreen { WELCOME, CHAT, SESSIONS, MODELS, DOWNLOAD, SETTINGS }
 

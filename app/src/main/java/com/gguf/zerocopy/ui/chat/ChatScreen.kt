@@ -170,7 +170,9 @@ fun ChatScreen(
         delay(60)
         val final = engine?.readTokenStream().orEmpty()
         val ft = engine?.getTokensGenerated() ?: 0
-        if (final.isNotEmpty() && messages.none { it.timestamp == start && it.role == MessageRole.ASSISTANT }) {
+        if (final.isNotEmpty() &&
+          messages.none { it.timestamp == start && it.role == MessageRole.ASSISTANT }
+        ) {
           val msg = ChatMessage(
             MessageRole.ASSISTANT,
             final,
@@ -374,14 +376,18 @@ fun ChatScreen(
                     context.contentResolver.openInputStream(attach)?.use {
                       it.readBytes()
                     }
-                  } catch (_: Exception) { null }
+                  } catch (_: Exception) {
+                    null
+                  }
                   val b64 = imageBytes?.let {
                     android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP)
                   } ?: ""
                   fullPrompt = if (b64.length in 50..500_000) {
                     "Analyze this image and respond.\n[Image: data:image/jpeg;base64,$b64]\nUser: $msg"
                   } else {
-                    "[Image attached: ${attachmentName} (${imageBytes?.size?.div(1024) ?: 0}KB)]\n$msg"
+                    "[Image attached: $attachmentName (${imageBytes?.size?.div(
+                      1024
+                    ) ?: 0}KB)]\n$msg"
                   }
                 }
                 engine.executeInference(fullPrompt, cb)

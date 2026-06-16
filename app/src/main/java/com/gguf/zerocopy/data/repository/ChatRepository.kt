@@ -5,13 +5,13 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.concurrent.read
-import kotlin.concurrent.write
 
 data class ChatSession(
   val id: String = "session_${System.currentTimeMillis()}",
@@ -73,7 +73,11 @@ class ChatRepository(context: Context) {
     }
   }
 
-  fun createSession(name: String? = null, modelPath: String = "", modelName: String = ""): ChatSession {
+  fun createSession(
+    name: String? = null,
+    modelPath: String = "",
+    modelName: String = ""
+  ): ChatSession {
     val session = ChatSession(
       name = name ?: generateSessionName(),
       modelPath = modelPath,
@@ -107,9 +111,9 @@ class ChatRepository(context: Context) {
               it != "null" && it.isNotEmpty()
             },
             attachmentType =
-              obj.optString("attachmentType", null)
-                .takeIf { it != "null" && it.isNotEmpty() }
-                ?.let { AttachmentType.valueOf(it) }
+            obj.optString("attachmentType", null)
+              .takeIf { it != "null" && it.isNotEmpty() }
+              ?.let { AttachmentType.valueOf(it) }
           )
         }
       } catch (_: Exception) {
